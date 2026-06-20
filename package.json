@@ -1,0 +1,9 @@
+{
+  "name": "crewai-developer-copilot-node-helper",
+  "version": "1.0.0",
+  "description": "Node helper dependencies for crewai developer copilot",
+  "dependencies": {
+    "madge": "^8.0.0",
+    "dependency-cruiser": "^16.4.0"
+  }
+}

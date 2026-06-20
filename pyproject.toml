@@ -1,0 +1,19 @@
+[project]
+name = "crewai-developer-copilot"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "crewai",
+    "python-dotenv",
+    "rich",
+    "tree-sitter",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
