@@ -11,11 +11,78 @@ from database.manager import DatabaseManager
 import time
 import random
 
-# Try to import the server error class from google genai if available
+# Try to import error classes from google genai and openai if available
 try:
-    from google.genai.errors import ServerError as GenaiServerError
+    from google.genai.errors import ServerError as GenaiServerError, APIError as GenaiAPIError
 except Exception:
     GenaiServerError = Exception
+    GenaiAPIError = Exception
+
+try:
+    import openai
+    OpenAIRateLimitError = openai.RateLimitError
+except Exception:
+    OpenAIRateLimitError = Exception
+
+# Load rate limit and cooldown parameters from the environment
+try:
+    GLOBAL_MAX_RPM = int(os.environ.get("CREWAI_MAX_RPM", "10"))
+except ValueError:
+    GLOBAL_MAX_RPM = 10
+
+try:
+    FLOW_COOLDOWN = int(os.environ.get("FLOW_COOLDOWN_SECONDS", "10"))
+except ValueError:
+    FLOW_COOLDOWN = 10
+
+
+def execute_crew_with_retry(crew: Crew, max_attempts: int = 5) -> Any:
+    """
+    Executes a crew's kickoff inside a retry/backoff loop to handle transient
+    server errors, rate limits (429), and resource exhaustion errors.
+    """
+    attempts = 0
+    backoff = 2.0
+    while True:
+        try:
+            return crew.kickoff()
+        except (GenaiServerError, GenaiAPIError, OpenAIRateLimitError) as e:
+            attempts += 1
+            if attempts >= max_attempts:
+                print(f"[Flow] Maximum attempts reached ({max_attempts}). Raising error...")
+                raise
+            
+            # Identify if it is a rate limit error (HTTP 429)
+            is_rate_limit = False
+            err_str = str(e).lower()
+            if hasattr(e, "code") and e.code == 429:
+                is_rate_limit = True
+            elif "429" in err_str or "rate limit" in err_str or "resource exhausted" in err_str:
+                is_rate_limit = True
+            
+            # Apply backoff
+            multiplier = 8.0 if is_rate_limit else 2.0
+            wait = (backoff * multiplier) + random.uniform(0.5, 2.0)
+            
+            error_type = "Rate limit / quota exceeded" if is_rate_limit else "Transient server error"
+            print(f"[Flow] {error_type} detected. Attempt {attempts}/{max_attempts}. Retrying in {wait:.1f}s... Error detail: {e}")
+            time.sleep(wait)
+            backoff = min(backoff * 2.0, 30.0)
+            
+        except Exception as e:
+            # For general exceptions, check the error message for rate limit indicators
+            err_str = str(e).lower()
+            if any(term in err_str for term in ["429", "rate limit", "resource exhausted", "limit exceeded", "quota"]):
+                attempts += 1
+                if attempts >= max_attempts:
+                    raise
+                wait = (backoff * 8.0) + random.uniform(0.5, 2.0)
+                print(f"[Flow] Rate limit detected via message. Attempt {attempts}/{max_attempts}. Retrying in {wait:.1f}s... Error: {e}")
+                time.sleep(wait)
+                backoff = min(backoff * 2.0, 30.0)
+            else:
+                # Re-raise non-retryable errors immediately
+                raise
 
 class DocumentationGenerationFlow(Flow):
     """
@@ -42,12 +109,16 @@ class DocumentationGenerationFlow(Flow):
         crew = Crew(
             agents=[arch_agent, route_agent],
             tasks=[arch_task, route_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        crew.kickoff()
+        execute_crew_with_retry(crew)
 
     @listen(generate_architecture_and_routes)
     def generate_dependencies_and_database(self):
+        if FLOW_COOLDOWN > 0:
+            print(f"[Flow] Cooling down for {FLOW_COOLDOWN} seconds to avoid rate limits...")
+            time.sleep(FLOW_COOLDOWN)
         print("[Flow] Step 2: Generating module dependencies and database documentation...")
         dep_agent = self.agents.dependency_agent()
         db_agent = self.agents.database_agent()
@@ -58,12 +129,16 @@ class DocumentationGenerationFlow(Flow):
         crew = Crew(
             agents=[dep_agent, db_agent],
             tasks=[dep_task, db_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        crew.kickoff()
+        execute_crew_with_retry(crew)
 
     @listen(generate_dependencies_and_database)
     def generate_validations_and_business_rules(self):
+        if FLOW_COOLDOWN > 0:
+            print(f"[Flow] Cooling down for {FLOW_COOLDOWN} seconds to avoid rate limits...")
+            time.sleep(FLOW_COOLDOWN)
         print("[Flow] Step 3: Generating schemas and business rules documentation...")
         val_agent = self.agents.validation_agent()
         biz_agent = self.agents.business_logic_agent()
@@ -77,12 +152,16 @@ class DocumentationGenerationFlow(Flow):
         crew = Crew(
             agents=[val_agent, biz_agent],
             tasks=[val_task, biz_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        crew.kickoff()
+        execute_crew_with_retry(crew)
 
     @listen(generate_validations_and_business_rules)
     def generate_project_summary(self):
+        if FLOW_COOLDOWN > 0:
+            print(f"[Flow] Cooling down for {FLOW_COOLDOWN} seconds to avoid rate limits...")
+            time.sleep(FLOW_COOLDOWN)
         print("[Flow] Step 4: Finalizing documentation with project summary...")
         doc_agent = self.agents.documentation_agent()
         summary_task = self.tasks.documentation_summary_task(
@@ -94,9 +173,10 @@ class DocumentationGenerationFlow(Flow):
         crew = Crew(
             agents=[doc_agent],
             tasks=[summary_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        crew.kickoff()
+        execute_crew_with_retry(crew)
         print("[Flow] Documentation Generation Flow Complete!")
 
     def generate_functions_markdown(self):
@@ -163,14 +243,18 @@ class RequirementPlanningFlow(Flow):
         crew = Crew(
             agents=[impact_agent],
             tasks=[analysis_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        res = crew.kickoff()
+        res = execute_crew_with_retry(crew)
         # Save output in state
         self.state["analysis_report"] = res.raw
 
     @listen(analyze_requirement)
     def plan_regression_tests(self):
+        if FLOW_COOLDOWN > 0:
+            print(f"[Flow] Cooling down for {FLOW_COOLDOWN} seconds to avoid rate limits...")
+            time.sleep(FLOW_COOLDOWN)
         print("[Flow] Step 2: Creating automated testing guidelines and checklists...")
         test_agent = self.agents.test_planning_agent()
         test_task = self.tasks.requirement_test_planning_task(test_agent, self.requirement)
@@ -178,9 +262,10 @@ class RequirementPlanningFlow(Flow):
         crew = Crew(
             agents=[test_agent],
             tasks=[test_task],
-            process=Process.sequential
+            process=Process.sequential,
+            max_rpm=GLOBAL_MAX_RPM
         )
-        res = crew.kickoff()
+        res = execute_crew_with_retry(crew)
         self.state["test_plan_report"] = res.raw
         print("[Flow] Requirement Planning Flow Complete!")
 
@@ -200,27 +285,11 @@ def run_function_analysis(api_key: str, function_name: str) -> str:
     crew = Crew(
         agents=[biz_agent],
         tasks=[task],
-        process=Process.sequential
+        process=Process.sequential,
+        max_rpm=GLOBAL_MAX_RPM
     )
-    # retry loop for transient server errors (e.g., 503 due to high demand)
-    attempts = 0
-    max_attempts = 5
-    backoff = 1.0
-    while True:
-        try:
-            result = crew.kickoff()
-            return result.raw
-        except GenaiServerError as e:
-            attempts += 1
-            if attempts >= max_attempts:
-                raise
-            wait = backoff + random.random()
-            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
-            time.sleep(wait)
-            backoff = min(backoff * 2, 16.0)
-        except Exception as e:
-            # If it's not the GenAI ServerError, re-raise
-            raise
+    result = execute_crew_with_retry(crew)
+    return result.raw
 
 def run_module_analysis(api_key: str, module_name: str) -> str:
     """
@@ -235,25 +304,11 @@ def run_module_analysis(api_key: str, module_name: str) -> str:
     crew = Crew(
         agents=[dep_agent],
         tasks=[task],
-        process=Process.sequential
+        process=Process.sequential,
+        max_rpm=GLOBAL_MAX_RPM
     )
-    attempts = 0
-    max_attempts = 5
-    backoff = 1.0
-    while True:
-        try:
-            result = crew.kickoff()
-            return result.raw
-        except GenaiServerError as e:
-            attempts += 1
-            if attempts >= max_attempts:
-                raise
-            wait = backoff + random.random()
-            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
-            time.sleep(wait)
-            backoff = min(backoff * 2, 16.0)
-        except Exception:
-            raise
+    result = execute_crew_with_retry(crew)
+    return result.raw
 
 def run_impact_analysis(api_key: str, change_description: str) -> str:
     """
@@ -268,22 +323,8 @@ def run_impact_analysis(api_key: str, change_description: str) -> str:
     crew = Crew(
         agents=[impact_agent],
         tasks=[task],
-        process=Process.sequential
+        process=Process.sequential,
+        max_rpm=GLOBAL_MAX_RPM
     )
-    attempts = 0
-    max_attempts = 5
-    backoff = 1.0
-    while True:
-        try:
-            result = crew.kickoff()
-            return result.raw
-        except GenaiServerError as e:
-            attempts += 1
-            if attempts >= max_attempts:
-                raise
-            wait = backoff + random.random()
-            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
-            time.sleep(wait)
-            backoff = min(backoff * 2, 16.0)
-        except Exception:
-            raise
+    result = execute_crew_with_retry(crew)
+    return result.raw

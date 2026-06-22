@@ -25,7 +25,7 @@ class CopilotAgents:
             # However, during class loading, let's keep it lazy so we don't break imports
             pass
         # Allow overriding the target model via environment variable
-        model_name = os.environ.get("GEMINI_MODEL", "gemini/gemini-2.5-flash")
+        model_name = os.environ.get("GEMINI_MODEL", "gemini/gemini-3.1-flash-lite")
         try:
             self.llm = LLM(
                 model=model_name,
@@ -35,6 +35,12 @@ class CopilotAgents:
         except Exception as e:
             # Provide a clearer runtime error message for initialization failures
             raise RuntimeError(f"Failed to initialize LLM with model '{model_name}': {e}") from e
+        
+        # Load maximum agent iterations limit
+        try:
+            self.max_iter = int(os.environ.get("AGENT_MAX_ITER", "10"))
+        except ValueError:
+            self.max_iter = 10
 
     def architecture_agent(self) -> Agent:
         return Agent(
@@ -43,7 +49,8 @@ class CopilotAgents:
             backstory="You are an expert software architect with a background in designing large-scale Node.js/TypeScript codebases. You map out folders, structural layouts, and framework structures easily from code facts.",
             tools=[get_project_metadata, query_dependencies, query_routes, query_business_flows],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def route_agent(self) -> Agent:
@@ -53,7 +60,8 @@ class CopilotAgents:
             backstory="You specialize in REST API design and endpoint structures. You document route controllers, parameters, and active middlewares to make endpoints easy to understand for developers.",
             tools=[query_routes, query_functions, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def validation_agent(self) -> Agent:
@@ -63,7 +71,8 @@ class CopilotAgents:
             backstory="You are a security-conscious engineer obsessed with input sanitation. You verify that all API inputs are properly validated using Zod, Joi, or Yup, and identify areas susceptible to injections or type bypasses.",
             tools=[query_validations, query_routes, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def dependency_agent(self) -> Agent:
@@ -73,7 +82,8 @@ class CopilotAgents:
             backstory="You are a dependency tree expert. You know how modules couple together and you help developers refactor code by showing them module networks and pointing out modules that are too tightly coupled.",
             tools=[query_dependencies, get_project_metadata],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def business_logic_agent(self) -> Agent:
@@ -83,7 +93,8 @@ class CopilotAgents:
             backstory="You are a business systems translator. You read source code functions and explain their actions, conditional logic, side effects, and calculations in clear business terms.",
             tools=[query_functions, query_business_flows, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def database_agent(self) -> Agent:
@@ -93,7 +104,8 @@ class CopilotAgents:
             backstory="You are a database architect. You map relationships between collections or tables, describe database-level constraints, trace schema migrations, and explain how data flows into and out of the database.",
             tools=[query_database_objects, query_database_migrations, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def impact_analysis_agent(self) -> Agent:
@@ -103,7 +115,8 @@ class CopilotAgents:
             backstory="You are a quality gatekeeper. You analyze proposed updates, map out potential ripple effects across the application graph, identify regression surfaces, and score implementation risks.",
             tools=[query_dependencies, query_routes, query_database_objects, query_business_flows, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def test_planning_agent(self) -> Agent:
@@ -113,7 +126,8 @@ class CopilotAgents:
             backstory="You are a QA automation expert. You design robust test scenarios matching database, route, and function signatures. You generate test plans that assure absolute codebase reliability.",
             tools=[query_functions, query_routes, query_validations, get_file_content],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
 
     def documentation_agent(self) -> Agent:
@@ -123,5 +137,6 @@ class CopilotAgents:
             backstory="You are a seasoned technical writer with experience writing clean developer documentation, system descriptions, and summaries. You verify styling and organize reports logically.",
             tools=[get_project_metadata],
             llm=self.llm,
-            verbose=True
+            verbose=True,
+            max_iter=self.max_iter
         )
