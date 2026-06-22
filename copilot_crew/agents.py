@@ -24,12 +24,17 @@ class CopilotAgents:
             # We will use a fallback or raise, but raising is safer.
             # However, during class loading, let's keep it lazy so we don't break imports
             pass
-            
-        self.llm = LLM(
-            model="gemini/gemini-2.5-flash",
-            api_key=self.api_key,
-            temperature=0.2
-        )
+        # Allow overriding the target model via environment variable
+        model_name = os.environ.get("GEMINI_MODEL", "gemini/gemini-2.5-flash")
+        try:
+            self.llm = LLM(
+                model=model_name,
+                api_key=self.api_key,
+                temperature=0.2
+            )
+        except Exception as e:
+            # Provide a clearer runtime error message for initialization failures
+            raise RuntimeError(f"Failed to initialize LLM with model '{model_name}': {e}") from e
 
     def architecture_agent(self) -> Agent:
         return Agent(

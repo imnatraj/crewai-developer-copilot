@@ -15,6 +15,19 @@ def get_db_manager() -> DatabaseManager:
         _db_manager = DatabaseManager("metadata.db")
     return _db_manager
 
+
+def set_db_manager(db_path_or_manager):
+    """
+    Set the global DB manager used by the tools.
+    Accepts either a DatabaseManager instance or a path string to the SQLite file.
+    """
+    global _db_manager
+    if isinstance(db_path_or_manager, DatabaseManager):
+        _db_manager = db_path_or_manager
+    else:
+        _db_manager = DatabaseManager(str(db_path_or_manager))
+    return _db_manager
+
 def get_latest_project_id(db: DatabaseManager) -> int:
     """
     Helper to get the most recently scanned project ID.

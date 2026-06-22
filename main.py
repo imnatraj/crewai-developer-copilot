@@ -25,6 +25,7 @@ from copilot_crew.flows import (
     run_module_analysis,
     run_impact_analysis
 )
+from copilot_crew.tools import set_db_manager
 
 console = Console()
 
@@ -45,6 +46,37 @@ def print_help():
     console.print(help_text)
 
 def check_api_key() -> str:
+    """
+    Validate GEMINI_API_KEY presence and basic format.
+    """
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+
+    if not key:
+        console.print(
+            Panel(
+                "[bold red]Error: GEMINI_API_KEY is not configured.[/bold red]\n\n"
+                "Create a Gemini API key in Google AI Studio and add it to your .env file:\n\n"
+                "[bold]GEMINI_API_KEY=your_api_key_here[/bold]",
+                title="Configuration Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+    # Basic validation
+    if len(key) < 20:
+        console.print(
+            Panel(
+                "[bold red]Invalid GEMINI_API_KEY detected.[/bold red]\n\n"
+                "The configured value appears too short to be a valid API credential.\n"
+                "Verify your .env file and generate a new key if necessary.",
+                title="Configuration Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+    return key
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         console.print(Panel(
@@ -190,7 +222,11 @@ def main():
             console.print(f"[bold red]Error: {proj_path} is not a valid directory.[/bold red]")
             sys.exit(1)
             
-        db_manager = DatabaseManager("metadata.db")
+        # Store metadata.db inside the target project directory so each project keeps its own facts
+        project_db_path = Path(proj_path) / "metadata.db"
+        db_manager = DatabaseManager(str(project_db_path))
+        # Ensure tools and agents use the same DB instance
+        set_db_manager(db_manager)
         
         console.print(f"\n[bold yellow]Starting analysis for codebase at {proj_path}...[/bold yellow]\n")
         project_id = run_scan(proj_path, db_manager)
@@ -243,37 +279,102 @@ def main():
         console.print(Panel(flow.state.get("test_plan_report", ""), title="Test Blueprints & QA Checklists", border_style="green"))
 
     elif command == "analyze-function":
+        # Accept: python main.py analyze-function <function_name> [--path <project_path>]
         if len(sys.argv) < 3:
-            console.print("[bold red]Error: Function name is required.[/bold red]\nUsage: python main.py analyze-function <function_name>")
+            console.print("[bold red]Error: Function name is required.[/bold red]\nUsage: python main.py analyze-function <function_name> [--path <project_path>]")
             sys.exit(1)
-            
-        func_name = sys.argv[2]
+
+        args = sys.argv[2:]
+        func_name = args[0]
+
+        # Optional path flag
+        proj_path = None
+        if "--path" in args:
+            try:
+                idx = args.index("--path")
+                proj_path = args[idx + 1]
+            except Exception:
+                console.print("[bold red]Error: --path requires a value.[/bold red]")
+                sys.exit(1)
+        elif "-p" in args:
+            try:
+                idx = args.index("-p")
+                proj_path = args[idx + 1]
+            except Exception:
+                console.print("[bold red]Error: -p requires a value.[/bold red]")
+                sys.exit(1)
+
         api_key = check_api_key()
-        
+
+        # If a project path was provided, use its metadata DB for tools
+        if proj_path:
+            project_db_path = Path(proj_path) / "metadata.db"
+            if not project_db_path.exists():
+                console.print(f"[bold red]Error: No metadata database found at {project_db_path}. Run 'document' on that project first.[/bold red]")
+                sys.exit(1)
+            db_manager = DatabaseManager(str(project_db_path))
+            set_db_manager(db_manager)
+
         console.print(f"\n[bold yellow]Running static function profile analysis for '{func_name}'...[/bold yellow]\n")
         report = run_function_analysis(api_key, func_name)
         console.print(Panel(report, title=f"Function Profile: {func_name}", border_style="cyan"))
 
     elif command == "analyze-module":
+        # Accept: python main.py analyze-module <module_name> [--path <project_path>]
         if len(sys.argv) < 3:
-            console.print("[bold red]Error: Module name is required.[/bold red]\nUsage: python main.py analyze-module <module_name>")
+            console.print("[bold red]Error: Module name is required.[/bold red]\nUsage: python main.py analyze-module <module_name> [--path <project_path>]")
             sys.exit(1)
-            
-        mod_name = sys.argv[2]
+
+        args = sys.argv[2:]
+        mod_name = args[0]
+        proj_path = None
+        if "--path" in args:
+            try:
+                idx = args.index("--path")
+                proj_path = args[idx + 1]
+            except Exception:
+                console.print("[bold red]Error: --path requires a value.[/bold red]")
+                sys.exit(1)
+
         api_key = check_api_key()
-        
+        if proj_path:
+            project_db_path = Path(proj_path) / "metadata.db"
+            if not project_db_path.exists():
+                console.print(f"[bold red]Error: No metadata database found at {project_db_path}. Run 'document' on that project first.[/bold red]")
+                sys.exit(1)
+            db_manager = DatabaseManager(str(project_db_path))
+            set_db_manager(db_manager)
+
         console.print(f"\n[bold yellow]Running module relationship analysis for '{mod_name}'...[/bold yellow]\n")
         report = run_module_analysis(api_key, mod_name)
         console.print(Panel(report, title=f"Module Profile: {mod_name}", border_style="cyan"))
 
     elif command == "impact":
+        # Accept: python main.py impact "<description>" [--path <project_path>]
         if len(sys.argv) < 3:
-            console.print("[bold red]Error: Change description is required.[/bold red]\nUsage: python main.py impact \"description of change\"")
+            console.print("[bold red]Error: Change description is required.[/bold red]\nUsage: python main.py impact \"description of change\" [--path <project_path>]")
             sys.exit(1)
-            
-        desc = sys.argv[2]
+
+        args = sys.argv[2:]
+        desc = args[0]
+        proj_path = None
+        if "--path" in args:
+            try:
+                idx = args.index("--path")
+                proj_path = args[idx + 1]
+            except Exception:
+                console.print("[bold red]Error: --path requires a value.[/bold red]")
+                sys.exit(1)
+
         api_key = check_api_key()
-        
+        if proj_path:
+            project_db_path = Path(proj_path) / "metadata.db"
+            if not project_db_path.exists():
+                console.print(f"[bold red]Error: No metadata database found at {project_db_path}. Run 'document' on that project first.[/bold red]")
+                sys.exit(1)
+            db_manager = DatabaseManager(str(project_db_path))
+            set_db_manager(db_manager)
+
         console.print(f"\n[bold yellow]Assessing ripple impact for proposed modification: '{desc}'...[/bold yellow]\n")
         report = run_impact_analysis(api_key, desc)
         console.print(Panel(report, title="Ripple Change Impact Matrix", border_style="red"))

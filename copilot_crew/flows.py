@@ -8,6 +8,14 @@ from crewai import Crew, Process
 from copilot_crew.agents import CopilotAgents
 from copilot_crew.tasks import CopilotTasks
 from database.manager import DatabaseManager
+import time
+import random
+
+# Try to import the server error class from google genai if available
+try:
+    from google.genai.errors import ServerError as GenaiServerError
+except Exception:
+    GenaiServerError = Exception
 
 class DocumentationGenerationFlow(Flow):
     """
@@ -194,8 +202,25 @@ def run_function_analysis(api_key: str, function_name: str) -> str:
         tasks=[task],
         process=Process.sequential
     )
-    result = crew.kickoff()
-    return result.raw
+    # retry loop for transient server errors (e.g., 503 due to high demand)
+    attempts = 0
+    max_attempts = 5
+    backoff = 1.0
+    while True:
+        try:
+            result = crew.kickoff()
+            return result.raw
+        except GenaiServerError as e:
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            wait = backoff + random.random()
+            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
+            time.sleep(wait)
+            backoff = min(backoff * 2, 16.0)
+        except Exception as e:
+            # If it's not the GenAI ServerError, re-raise
+            raise
 
 def run_module_analysis(api_key: str, module_name: str) -> str:
     """
@@ -212,8 +237,23 @@ def run_module_analysis(api_key: str, module_name: str) -> str:
         tasks=[task],
         process=Process.sequential
     )
-    result = crew.kickoff()
-    return result.raw
+    attempts = 0
+    max_attempts = 5
+    backoff = 1.0
+    while True:
+        try:
+            result = crew.kickoff()
+            return result.raw
+        except GenaiServerError as e:
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            wait = backoff + random.random()
+            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
+            time.sleep(wait)
+            backoff = min(backoff * 2, 16.0)
+        except Exception:
+            raise
 
 def run_impact_analysis(api_key: str, change_description: str) -> str:
     """
@@ -230,5 +270,20 @@ def run_impact_analysis(api_key: str, change_description: str) -> str:
         tasks=[task],
         process=Process.sequential
     )
-    result = crew.kickoff()
-    return result.raw
+    attempts = 0
+    max_attempts = 5
+    backoff = 1.0
+    while True:
+        try:
+            result = crew.kickoff()
+            return result.raw
+        except GenaiServerError as e:
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            wait = backoff + random.random()
+            print(f"[Flow] Transient server error from LLM (attempt {attempts}/{max_attempts}). Retrying in {wait:.1f}s...")
+            time.sleep(wait)
+            backoff = min(backoff * 2, 16.0)
+        except Exception:
+            raise
